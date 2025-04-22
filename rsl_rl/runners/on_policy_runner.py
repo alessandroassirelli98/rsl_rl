@@ -129,7 +129,7 @@ class OnPolicyRunner:
         self.current_learning_iteration = 0
         self.git_status_repos = [rsl_rl.__file__]
 
-    def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901
+    def run(self, run_mode: str, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901
         # initialize writer
         if self.log_dir is not None and self.writer is None and not self.disable_logs:
             # Launch either Tensorboard or Neptune & Tensorboard summary writer(s), default: Tensorboard.
@@ -167,7 +167,8 @@ class OnPolicyRunner:
         obs, extras = self.env.get_observations()
         privileged_obs = extras["observations"].get(self.privileged_obs_type, obs)
         obs, privileged_obs = obs.to(self.device), privileged_obs.to(self.device)
-        self.train_mode()  # switch to train mode (for dropout for example)
+        if run_mode == "train": self.train_mode()  # switch to train mode (for dropout for example)
+        elif run_mode == "eval": self.eval_mode()
 
         # Book keeping
         ep_infos = []
@@ -190,8 +191,12 @@ class OnPolicyRunner:
             # TODO: Do we need to synchronize empirical normalizers?
             #   Right now: No, because they all should converge to the same values "asymptotically".
 
-        # Start training
-        start_iter = self.current_learning_iteration
+        if run_mode == "train":
+            start_iter = self.current_learning_iteration
+        elif run_mode == "eval":
+            start_iter = 0
+
+        # Start agent rollouts
         tot_iter = start_iter + num_learning_iterations
         for it in range(start_iter, tot_iter):
             start = time.time()
@@ -214,7 +219,7 @@ class OnPolicyRunner:
                         privileged_obs = obs
 
                     # process the step
-                    self.alg.process_env_step(rewards, dones, infos)
+                    if run_mode == "train": self.alg.process_env_step(rewards, dones, infos)
 
                     # Extract intrinsic rewards (only for logging)
                     intrinsic_rewards = self.alg.intrinsic_rewards if self.alg.rnd else None
@@ -257,7 +262,7 @@ class OnPolicyRunner:
                     self.alg.compute_returns(privileged_obs)
 
             # update policy
-            loss_dict = self.alg.update()
+            loss_dict = self.alg.update() if run_mode == "train" else dict()
 
             stop = time.time()
             learn_time = stop - start
@@ -461,6 +466,7 @@ class OnPolicyRunner:
     def train_mode(self):
         # -- PPO
         self.alg.policy.train()
+        self.alg.policy.set_train_mode()
         # -- RND
         if self.alg.rnd:
             self.alg.rnd.train()
@@ -472,6 +478,7 @@ class OnPolicyRunner:
     def eval_mode(self):
         # -- PPO
         self.alg.policy.eval()
+        self.alg.policy.set_inference_mode()
         # -- RND
         if self.alg.rnd:
             self.alg.rnd.eval()
@@ -479,7 +486,18 @@ class OnPolicyRunner:
         if self.empirical_normalization:
             self.obs_normalizer.eval()
             self.privileged_obs_normalizer.eval()
+    
+    # Train the model keeping the same interface
+    def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901)
+        self.train_mode()
+        self.run(run_mode="train", num_learning_iterations = num_learning_iterations, init_at_random_ep_len = init_at_random_ep_len)
+    
+    # Evaluate 
+    def evaluate(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901)
+        self.eval_mode()
+        self.run(run_mode="eval", num_learning_iterations = num_learning_iterations, init_at_random_ep_len = init_at_random_ep_len)
 
+    
     def add_git_repo_to_log(self, repo_file_path):
         self.git_status_repos.append(repo_file_path)
 

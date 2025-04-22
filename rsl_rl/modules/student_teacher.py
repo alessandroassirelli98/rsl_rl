@@ -71,6 +71,7 @@ class StudentTeacher(nn.Module):
         self.distribution = None
         # disable args validation for speedup
         Normal.set_default_validate_args = False
+        self.is_inference = False
 
     def reset(self, dones=None, hidden_states=None):
         pass
@@ -95,9 +96,19 @@ class StudentTeacher(nn.Module):
         std = self.std.expand_as(mean)
         self.distribution = Normal(mean, std)
 
-    def act(self, observations):
+    def set_inference_mode(self):
+        self.is_inference = True
+    
+    def set_train_mode(self):
+        self.is_inference = False
+
+    def act(self, observations, **kwargs):
         self.update_distribution(observations)
-        return self.distribution.sample()
+        if not self.is_inference: 
+            act = self.distribution.sample()
+        else:
+            act = self.act_inference(observations)
+        return act
 
     def act_inference(self, observations):
         actions_mean = self.student(observations)

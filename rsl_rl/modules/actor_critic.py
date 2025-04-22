@@ -77,6 +77,8 @@ class ActorCritic(nn.Module):
         self.distribution = None
         # disable args validation for speedup
         Normal.set_default_validate_args(False)
+        
+        self.is_inference = False
 
     @staticmethod
     # not used at the moment
@@ -116,10 +118,20 @@ class ActorCritic(nn.Module):
             raise ValueError(f"Unknown standard deviation type: {self.noise_std_type}. Should be 'scalar' or 'log'")
         # create distribution
         self.distribution = Normal(mean, std)
+    
+    def set_inference_mode(self):
+        self.is_inference = True
+    
+    def set_train_mode(self):
+        self.is_inference = False
 
     def act(self, observations, **kwargs):
         self.update_distribution(observations)
-        return self.distribution.sample()
+        if not self.is_inference: 
+            act = self.distribution.sample()
+        else:
+            act = self.act_inference(observations)
+        return act
 
     def get_actions_log_prob(self, actions):
         return self.distribution.log_prob(actions).sum(dim=-1)
